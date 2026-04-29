@@ -20,26 +20,32 @@ If you want to keep up with changes to these skills, and any new ones I create, 
 
 [Sign Up To The Newsletter](https://www.aihero.dev/s/skills-newsletter)
 
-## Quickstart (30-second setup)
+## Quickstart (pi)
 
-1. Run the skills.sh installer:
+1. Install repo into pi:
 
 ```bash
-npx skills@latest add mattpocock/skills
+pi install https://github.com/kyerpotts/skills
 ```
 
-2. Pick the skills you want, and which coding agents you want to install them on. **Make sure you select `/setup-matt-pocock-skills`**.
+Or clone it locally and add its `skills/` directory to `~/.pi/agent/settings.json`.
 
-3. Run `/setup-matt-pocock-skills` in your agent. It will:
-   - Ask you which issue tracker you want to use (GitHub, Linear, or local files)
-   - Ask you what labels you apply to ticks when you triage them (`/triage` uses labels)
-   - Ask you where you want to save any docs we create
+2. Run the setup skill:
 
-4. Bam - you're ready to go.
+```text
+/skill:setup-matt-pocock-skills
+```
+
+3. The setup skill will:
+   - Ask which issue tracker you want to use
+   - Ask which triage labels your workflow uses
+   - Ask how your domain docs are laid out
+
+4. Reload or start a new pi session if needed, then use the skills.
 
 ## Why These Skills Exist
 
-I built these skills as a way to fix common failure modes I see with Claude Code, Codex, and other coding agents.
+I built these skills as a way to fix common failure modes I see with coding agents.
 
 ### #1: The Agent Didn't Do What I Want
 
@@ -166,7 +172,6 @@ General workflow tools, not code-specific.
 
 Tools I keep around but rarely use.
 
-- **[git-guardrails-claude-code](./skills/misc/git-guardrails-claude-code/SKILL.md)** — Set up Claude Code hooks to block dangerous git commands (push, reset --hard, clean, etc.) before they execute.
 - **[migrate-to-shoehorn](./skills/misc/migrate-to-shoehorn/SKILL.md)** — Migrate test files from `as` type assertions to @total-typescript/shoehorn.
 - **[scaffold-exercises](./skills/misc/scaffold-exercises/SKILL.md)** — Create exercise directory structures with sections, problems, solutions, and explainers.
 - **[setup-pre-commit](./skills/misc/setup-pre-commit/SKILL.md)** — Set up Husky pre-commit hooks with lint-staged, Prettier, type checking, and tests.
