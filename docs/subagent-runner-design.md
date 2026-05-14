@@ -4,6 +4,8 @@
 
 Draft. Phase 1 extraction is implemented in `pi-default-setup/extensions/lib/` and `markov-design.ts`; later consumers are still pending.
 
+The current implementation uses isolated `pi --mode json` subprocesses. That is compatible with pi's CLI integration surface, but the target implementation should move toward the SDK patterns documented in pi's `docs/sdk.md`: `createAgentSession()`, explicit resource loading, in-memory sessions, direct event subscription, and caller-owned tool/resource selection.
+
 ## Problem
 
 Two retained skills depend on real subagent orchestration, not a sequential approximation:
@@ -25,11 +27,12 @@ That pattern is good enough to justify a reusable subagent runtime. It is not ye
 ## Goals
 
 1. Preserve the original subagent-based use case of the imported skills.
-2. Extract the reusable subprocess orchestration logic from `markov-design.ts`.
+2. Extract the reusable orchestration logic from `markov-design.ts`.
 3. Support parallel fan-out so multiple subagents can run concurrently.
 4. Default subagents to read-only exploration, not workspace mutation.
 5. Keep the first API small, explicit, and extension-oriented.
 6. Make `design-an-interface` the first non-Markov consumer.
+7. Align the runner with pi SDK patterns once the subprocess extraction is proven.
 
 ## Non-goals
 
@@ -41,7 +44,7 @@ That pattern is good enough to justify a reusable subagent runtime. It is not ye
 
 ## Existing Markov Pattern
 
-`markov-design.ts` already contains these reusable pieces:
+`markov-design.ts` originally contained these reusable pieces:
 
 - pi executable resolution via `getPiInvocation`
 - child process spawn and abort handling via `runAgent`
@@ -57,6 +60,44 @@ It also contains Markov-specific logic that should *not* become part of the gene
 - iteration loop and user action loop
 - Markov renderers
 - artifact generation flow
+
+## SDK alignment target
+
+Pi's reference docs describe the SDK as the programmatic layer for embedding agent capabilities and for building custom tools that spawn subagents. The runner should therefore evolve from a CLI-subprocess implementation to an SDK-backed implementation once the public contract is stable.
+
+The SDK-backed runner should preserve the same `SubagentJob` / `SubagentResult` surface while changing the execution backend:
+
+- Use `createAgentSession()` for each subagent job.
+- Use `SessionManager.inMemory()` so subagent runs are ephemeral and do not write normal pi session history.
+- Use an explicit `DefaultResourceLoader` configuration instead of ambient discovery.
+- Do not load parent extensions, skills, prompt templates, or context files unless the job explicitly asks for them.
+- Supply tools through the SDK's `tools` / `customTools` options rather than shell flags.
+- Subscribe directly to session events instead of parsing JSONL subprocess output.
+- Extract final assistant text from SDK events/messages, preserving the current output contract.
+- Dispose each subagent session after completion.
+- Keep batch orchestration and result normalization in `subagent-runner.ts`, not in individual workflows.
+
+The SDK-backed version still needs the same safety boundary as the subprocess version: read-only by default, no write-capable tools unless a workflow explicitly opts in, and all structured outputs validated by the parent workflow.
+
+### Compatibility phase
+
+The current subprocess runner may remain as a compatibility backend while the SDK backend is introduced. The runner should expose one logical API and hide backend selection internally. Workflows such as Markov Design, `design-an-interface`, and architecture exploration should not know whether a job is executed by subprocess or SDK.
+
+A later implementation can support:
+
+```ts
+type SubagentBackend = "sdk" | "subprocess";
+
+interface SubagentRunnerOptions {
+  cwd: string;
+  modelRef?: string;
+  signal?: AbortSignal;
+  backend?: SubagentBackend;
+  maxConcurrency?: number;
+}
+```
+
+Default should become `"sdk"` once it matches subprocess isolation and cancellation behavior.
 
 ## Constraints
 
@@ -98,6 +139,13 @@ That means:
 
 ## Proposed Design
 
+The runner has two layers:
+
+1. A stable orchestration contract (`SubagentJob`, `SubagentResult`, `runSubagent`, `runSubagents`).
+2. A replaceable execution backend.
+
+The first implementation uses CLI subprocesses because Markov already proved that pattern. The target backend should use the pi SDK while keeping the same orchestration contract.
+
 ## File layout
 
 ```text
@@ -107,6 +155,7 @@ pi-default-setup/
   extensions/
     lib/
       pi-subprocess.ts
+      sdk-subagent.ts
       subagent-runner.ts
       subagent-output.ts
     markov-design.ts
@@ -114,7 +163,7 @@ pi-default-setup/
 
 ### `pi-subprocess.ts`
 
-Low-level child-process runner for `pi`.
+Compatibility child-process runner for `pi`.
 
 Responsibilities:
 
@@ -125,13 +174,29 @@ Responsibilities:
 - support abort propagation
 - return raw execution result
 
-This module should know nothing about Markov, architecture review, or interface design.
+This module should know nothing about Markov, architecture review, or interface design. It should eventually become a fallback backend, not the default implementation.
+
+### `sdk-subagent.ts`
+
+Target SDK-backed executor for one subagent job.
+
+Responsibilities:
+
+- create one isolated `AgentSession` with `createAgentSession()`
+- use `SessionManager.inMemory()` for ephemeral execution
+- construct an explicit resource loader so ambient extensions, skills, prompt templates, and context files do not leak into subagents
+- map tool presets to SDK tool configuration
+- subscribe to session events and capture assistant output, stop reason, errors, and timing
+- abort the session when the parent `AbortSignal` fires
+- dispose the session after completion
+
+This module should provide the same raw execution information that the subprocess backend provides, but without JSONL parsing or process management.
 
 ### `subagent-output.ts`
 
 Helpers for:
 
-- extracting final assistant text from JSONL events
+- extracting final assistant text from SDK messages or JSONL events
 - parsing fenced JSON output
 - normalizing errors
 - timing and metadata capture
@@ -143,7 +208,7 @@ Mid-level orchestration for one or many subagent jobs.
 Responsibilities:
 
 - accept a typed job spec
-- map job spec to `pi` subprocess args
+- choose the SDK or subprocess backend
 - run one or many jobs
 - enforce concurrency limit
 - return normalized results
@@ -236,7 +301,20 @@ Reserve for later. Needed only if a future subagent needs a non-default safe sha
 
 ## Execution model
 
-### Single job
+### Single job — SDK target
+
+1. Build the subagent prompt and system prompt from the job spec.
+2. Create an isolated SDK session with in-memory session management.
+3. Load only explicitly requested resources.
+4. Provide only tools allowed by the job's tool preset.
+5. Subscribe to session events.
+6. Prompt the session and wait for completion.
+7. Capture final assistant text, stop reason, error state, and duration.
+8. If `expected === "json"`, parse and return `json`.
+9. Dispose the session.
+10. Return normalized `SubagentResult`.
+
+### Single job — subprocess compatibility
 
 1. Build subprocess args.
 2. Spawn child.
@@ -297,7 +375,28 @@ Success criteria:
 - cancellation propagates to all children
 - result order remains deterministic
 
-### Phase 3: `design-an-interface`
+### Phase 3: SDK backend
+
+Add an SDK-backed executor while preserving the existing runner API.
+
+Expected shape:
+
+1. create one `AgentSession` per subagent job
+2. use `SessionManager.inMemory()`
+3. use explicit resource loading and tool selection
+4. subscribe to events directly
+5. normalize output into the existing `SubagentResult`
+6. keep subprocess execution available as a fallback until SDK parity is proven
+
+Success criteria:
+
+- SDK backend can run Markov stages without changing Markov workflow code
+- output contract matches subprocess backend
+- cancellation propagates to active SDK sessions
+- no ambient skills/extensions/context files leak into subagent prompts
+- read-only tool preset maps to the intended SDK tool set
+
+### Phase 4: `design-an-interface`
 
 Implement a pi-native workflow backed by the runner.
 
@@ -314,7 +413,7 @@ Success criteria:
 - retains original multiple-design contrast
 - no sequential fallback hidden behind the same name
 
-### Phase 4: `improve-codebase-architecture` interface design branch
+### Phase 5: `improve-codebase-architecture` interface design branch
 
 Use the same runner for `INTERFACE-DESIGN.md`.
 
@@ -324,7 +423,7 @@ Expected shape:
 2. parent spawns multiple interface-design subagents in parallel
 3. parent compares by depth, locality, and seam placement
 
-### Phase 5: `improve-codebase-architecture` exploration phase
+### Phase 6: `improve-codebase-architecture` exploration phase
 
 Extend runner usage into exploration itself.
 
@@ -394,11 +493,15 @@ The extension should first prove the pattern through fixed workflows, then consi
 3. Should batch execution support per-job cwd overrides in the first version, or only one shared cwd?
 4. Should the runner expose intermediate status updates to UI, or should callers simply set coarse-grained status labels?
 5. Should we store subagent transcripts for debugging, or keep only normalized results in the first version?
+6. What is the exact SDK resource-loader configuration that best mirrors `--no-extensions --no-skills --no-prompt-templates --no-context-files`?
+7. Should the SDK backend use built-in tool factories or explicit tool instances for cwd-bound read-only tools?
+8. How should SDK stop/error events be mapped to the existing `stopReason` and `errorMessage` fields?
 
 ## Recommendation
 
-Proceed with a small reversible extraction from `markov-design.ts` into a private helper library.
+Keep the current subprocess extraction as the compatibility baseline, but treat the SDK-backed runner as the target architecture.
 
 Do not rewrite subagent-dependent skills into sequential approximations.
 Do not expose a generic model-callable subagent tool yet.
-Prove the runtime with Markov first, then port `design-an-interface`, then port the architecture skills that depend on true multi-agent contrast.
+Do not let workflows depend on backend details.
+Prove SDK parity with Markov first, then port `design-an-interface`, then port the architecture skills that depend on true multi-agent contrast.
