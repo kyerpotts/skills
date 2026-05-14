@@ -1,6 +1,6 @@
-# Matt Pocock Skills
+# Agent Skills
 
-A collection of agent skills loaded by pi. Skills are organized into buckets and consumed by per-repo configuration emitted by `/skill:setup-matt-pocock-skills`.
+A collection of agent skills loaded by pi. Skills are organized into buckets and consumed by per-repo configuration emitted by `/skill:setup-agent-skills`.
 
 ## Language
 
@@ -13,7 +13,7 @@ A single tracked unit of work inside an **Issue tracker** — a bug, task, PRD, 
 _Avoid_: ticket (use only when quoting external systems that call them tickets)
 
 **Triage role**:
-A canonical state-machine label applied to an **Issue** during triage (e.g. `needs-triage`, `ready-for-afk`). Each role maps to a real label string in the **Issue tracker** via `docs/agents/triage-labels.md`.
+A canonical state-machine label applied to an **Issue** during triage (e.g. `needs-triage`, `ready-for-agent`). Each role maps to a real label string in the **Issue tracker** via `docs/agents/triage-labels.md`.
 
 ## Relationships
 

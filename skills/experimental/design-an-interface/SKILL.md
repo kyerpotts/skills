@@ -23,7 +23,7 @@ Ask: "What does this module need to do? Who will use it?"
 
 ### 2. Generate Designs (Parallel Sub-Agents)
 
-Spawn 3+ sub-agents simultaneously using Task tool. Each must produce a **radically different** approach.
+Spawn 3+ read-only pi subagents simultaneously when the subagent runner is available. If it is unavailable, stop and explain that this skill requires pi-native subagent support; do not silently approximate it with one sequential agent. Each subagent must produce a **radically different** approach.
 
 ```
 Prompt template for each sub-agent:
